@@ -84,49 +84,83 @@ export function fuzzyMatchFile(
 ): ScanMatch[] {
   const threshold = opts.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const ngramSize = opts.ngramSize ?? DEFAULT_NGRAM_SIZE;
-  const windowSlack = opts.windowSlack ?? 5; // allow ±5 lines around snippet length
+  const windowSlack = opts.windowSlack ?? 5;
 
   const matches: ScanMatch[] = [];
   const lines = content.split("\n");
+  const lineCount = lines.length;
+
+  // ── Pre-tokenize every line ONCE ────────────────────────────────
+  const lineTokens: string[][] = lines.map((l) => tokenize(l));
+  const lineStructTokens: string[][] = lines.map((l) => structuralTokenize(l));
+
+  // Pre-compute cumulative token counts for fast window size estimation
+  const cumTokenCount: number[] = new Array(lineCount + 1);
+  cumTokenCount[0] = 0;
+  for (let i = 0; i < lineCount; i++) {
+    cumTokenCount[i + 1] = cumTokenCount[i] + lineTokens[i].length;
+  }
 
   for (const snippet of snippets) {
     const snippetLines = normalize(snippet.content).split("\n");
     const baseWindowSize = snippetLines.length;
 
     // Pre-compute snippet shingles
-    const snippetTokenShingles = shingle(tokenize(snippet.content), ngramSize);
-    const snippetStructShingles = shingle(structuralTokenize(snippet.content), ngramSize);
+    const snippetTokenArr = tokenize(snippet.content);
+    const snippetStructArr = structuralTokenize(snippet.content);
+    const snippetTokenShingles = shingle(snippetTokenArr, ngramSize);
+    const snippetStructShingles = shingle(snippetStructArr, ngramSize);
+    const snippetTokenCount = snippetTokenArr.length;
 
     // Skip if snippet is too small for meaningful comparison
     if (snippetTokenShingles.size < 2) continue;
 
+    // Quick skip: if file is much smaller than snippet, no point checking
+    if (lineCount < baseWindowSize - windowSlack) continue;
+
     let bestMatch: FuzzyMatchResult | null = null;
 
-    // Slide windows of varying sizes around the snippet length
-    const minWindow = Math.max(1, baseWindowSize - windowSlack);
-    const maxWindow = Math.min(lines.length, baseWindowSize + windowSlack);
+    // Only check the base window size (not all ±slack sizes)
+    const winSize = Math.min(baseWindowSize, lineCount);
 
-    for (let winSize = minWindow; winSize <= maxWindow; winSize++) {
-      for (let i = 0; i <= lines.length - winSize; i++) {
-        const windowText = lines.slice(i, i + winSize).join("\n");
+    for (let i = 0; i <= lineCount - winSize; i++) {
+      // ── Fast token count heuristic ──────────────────────────────
+      // If window has wildly different token count, skip expensive shingling.
+      // Jaccard can't exceed min(|A|,|B|)/max(|A|,|B|) for same-sized shingles,
+      // and token count is a proxy for shingle count.
+      const windowTokenCount = cumTokenCount[i + winSize] - cumTokenCount[i];
+      const ratio = windowTokenCount > snippetTokenCount
+        ? snippetTokenCount / windowTokenCount
+        : windowTokenCount / snippetTokenCount;
+      if (ratio < threshold * 0.5) continue; // impossible to reach threshold
 
-        const windowTokenShingles = shingle(tokenize(windowText), ngramSize);
-        const windowStructShingles = shingle(structuralTokenize(windowText), ngramSize);
+      // Build window token arrays from pre-tokenized lines
+      let windowTokenArr: string[] = [];
+      let windowStructArr: string[] = [];
+      for (let j = i; j < i + winSize; j++) {
+        windowTokenArr = windowTokenArr.concat(lineTokens[j]);
+        windowStructArr = windowStructArr.concat(lineStructTokens[j]);
+      }
 
-        const tokenSim = jaccardSimilarity(snippetTokenShingles, windowTokenShingles);
-        const structSim = jaccardSimilarity(snippetStructShingles, windowStructShingles);
-        const combined = 0.4 * tokenSim + 0.6 * structSim;
+      const windowTokenShingles = shingle(windowTokenArr, ngramSize);
+      const windowStructShingles = shingle(windowStructArr, ngramSize);
 
-        if (combined >= threshold) {
-          if (!bestMatch || combined > bestMatch.combined) {
-            bestMatch = {
-              snippet,
-              similarity: tokenSim,
-              structural: structSim,
-              combined,
-              windowStart: i,
-            };
-          }
+      // Early exit: check structural similarity first (weighted 0.6)
+      const structSim = jaccardSimilarity(snippetStructShingles, windowStructShingles);
+      if (structSim * 0.6 + 0.4 < threshold) continue; // even perfect token sim can't save it
+
+      const tokenSim = jaccardSimilarity(snippetTokenShingles, windowTokenShingles);
+      const combined = 0.4 * tokenSim + 0.6 * structSim;
+
+      if (combined >= threshold) {
+        if (!bestMatch || combined > bestMatch.combined) {
+          bestMatch = {
+            snippet,
+            similarity: tokenSim,
+            structural: structSim,
+            combined,
+            windowStart: i,
+          };
         }
       }
     }

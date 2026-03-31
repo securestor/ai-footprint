@@ -9,7 +9,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/cli/index.js",
-    "dashboard": "node dist/cli/index.js dashboard"
+    "dashboard": "node dist/cli/index.js dashboard",
+    "test": "node --test dist/tests/*.test.js",
+    "test:watch": "node --test --watch dist/tests/*.test.js"
   },
   "keywords": [
     "ai",
@@ -19,8 +21,8 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.19.37",
+    "typescript": "^5.4.0"
   },
   "engines": {
     "node": ">=18"

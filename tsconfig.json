@@ -12,6 +12,6 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["cli/**/*.ts", "core/**/*.ts", "git-hooks/**/*.ts", "dashboard/**/*.ts"],
+  "include": ["cli/**/*.ts", "core/**/*.ts", "git-hooks/**/*.ts", "dashboard/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist", "examples"]
 }
