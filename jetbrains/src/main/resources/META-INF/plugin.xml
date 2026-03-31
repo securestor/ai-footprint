@@ -1,0 +1,116 @@
+<idea-plugin>
+    <id>com.aifootprint.jetbrains</id>
+    <name>AI Footprint</name>
+    <version>0.1.0</version>
+    <vendor email="support@aifootprint.dev" url="https://github.com/aifootprint/ai-footprint">
+        AI Footprint
+    </vendor>
+
+    <description><![CDATA[
+        <h2>AI Footprint — Git-native AI code provenance tracking</h2>
+        <p>In-editor attribution overlays, inline annotations, and real-time scanning
+        for AI-generated code. Works with GPT, Claude, Copilot, Gemini, and any other
+        AI coding tool.</p>
+        <ul>
+            <li><b>Inline annotations</b> — gutter icons and background highlights on AI-attributed lines</li>
+            <li><b>Tool window</b> — full scan report with model, confidence, and similarity details</li>
+            <li><b>Inspections</b> — configurable warnings/errors for unattributed AI code</li>
+            <li><b>Status bar widget</b> — live match count for the current file</li>
+            <li><b>Quick actions</b> — register snippets, run scans, view reports from the IDE</li>
+        </ul>
+        <p>Requires <code>ai-footprint</code> CLI: <code>npm install -g ai-footprint</code></p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <ul>
+            <li>0.1.0 — Initial release with scan, annotations, tool window, and status bar.</li>
+        </ul>
+    ]]></change-notes>
+
+    <idea-version since-build="241" until-build="253.*"/>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Tool Window -->
+        <toolWindow id="AI Footprint"
+                     anchor="bottom"
+                     icon="/icons/ai-footprint-13.svg"
+                     factoryClass="com.aifootprint.jetbrains.toolwindow.FootprintToolWindowFactory"/>
+
+        <!-- Status Bar Widget -->
+        <statusBarWidgetFactory id="AiFootprintStatusBar"
+                                 implementation="com.aifootprint.jetbrains.statusbar.FootprintStatusBarFactory"
+                                 order="after positionWidget"/>
+
+        <!-- Editor Annotations (External Annotator) -->
+        <externalAnnotator language=""
+                           implementationClass="com.aifootprint.jetbrains.annotator.FootprintExternalAnnotator"/>
+
+        <!-- Line Marker (Gutter Icons) -->
+        <codeInsight.lineMarkerProvider language=""
+                                         implementationClass="com.aifootprint.jetbrains.annotator.FootprintLineMarkerProvider"/>
+
+        <!-- Inspection -->
+        <localInspection language=""
+                         groupName="AI Footprint"
+                         displayName="Unattributed AI code"
+                         enabledByDefault="true"
+                         level="WARNING"
+                         implementationClass="com.aifootprint.jetbrains.inspection.UnattributedAiInspection"/>
+
+        <!-- Settings -->
+        <applicationConfigurable instance="com.aifootprint.jetbrains.settings.FootprintSettingsConfigurable"
+                                  displayName="AI Footprint"
+                                  id="com.aifootprint.settings"/>
+
+        <applicationService serviceImplementation="com.aifootprint.jetbrains.settings.FootprintSettings"/>
+
+        <!-- Project Service -->
+        <projectService serviceImplementation="com.aifootprint.jetbrains.service.FootprintService"/>
+
+        <!-- Startup Activity -->
+        <postStartupActivity implementation="com.aifootprint.jetbrains.FootprintStartupActivity"/>
+    </extensions>
+
+    <actions>
+        <group id="AiFootprint.Menu" text="AI Footprint" description="AI Footprint actions" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="AiFootprint.ScanProject"
+                    class="com.aifootprint.jetbrains.actions.ScanProjectAction"
+                    text="Scan Project"
+                    description="Scan the entire project for AI-generated code"
+                    icon="/icons/ai-footprint-13.svg"/>
+
+            <action id="AiFootprint.ScanCurrentFile"
+                    class="com.aifootprint.jetbrains.actions.ScanCurrentFileAction"
+                    text="Scan Current File"
+                    description="Scan the current file for AI-generated code"/>
+
+            <action id="AiFootprint.RegisterSnippet"
+                    class="com.aifootprint.jetbrains.actions.RegisterSnippetAction"
+                    text="Register Selection as AI Snippet"
+                    description="Register the selected code as a known AI-generated snippet"/>
+
+            <action id="AiFootprint.ToggleOverlay"
+                    class="com.aifootprint.jetbrains.actions.ToggleOverlayAction"
+                    text="Toggle Attribution Overlay"
+                    description="Show/hide AI attribution overlays in the editor"/>
+
+            <action id="AiFootprint.ShowReport"
+                    class="com.aifootprint.jetbrains.actions.ShowReportAction"
+                    text="Show Scan Report"
+                    description="Display the full AI Footprint scan report"/>
+        </group>
+
+        <!-- Editor context menu -->
+        <action id="AiFootprint.RegisterFromEditor"
+                class="com.aifootprint.jetbrains.actions.RegisterSnippetAction"
+                text="Register as AI Snippet"
+                description="Register selected code as AI snippet">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
