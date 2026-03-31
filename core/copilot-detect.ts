@@ -19,11 +19,13 @@
 import {
   existsSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   unlinkSync,
   mkdirSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 
 // ------------------------------------------------------------------ //
 // Types
@@ -197,13 +199,17 @@ export function detectCopilotSignals(opts?: {
   const markerSignal = detectAgentMarker(opts?.repoRoot);
   if (markerSignal) signals.push(markerSignal);
 
-  // 2. Per-agent environment variable checks
+  // 2. VS Code + Copilot environment detection (compound check)
+  const vscCopilotSignal = detectVSCodeCopilot();
+  if (vscCopilotSignal) signals.push(vscCopilotSignal);
+
+  // 3. Per-agent environment variable checks
   for (const agent of AGENTS) {
     const envSignal = detectAgentEnv(agent);
     if (envSignal) signals.push(envSignal);
   }
 
-  // 3. Commit message + author patterns
+  // 4. Commit message + author patterns
   if (opts?.commitMessage) {
     for (const agent of AGENTS) {
       const msgSignal = detectAgentMessage(agent, opts.commitMessage, opts.commitAuthor);
@@ -362,6 +368,61 @@ function detectAgentMarker(repoRoot?: string): AgentSignal | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Detect VS Code + GitHub Copilot via environment variables.
+ * VS Code sets VSCODE_GIT_ASKPASS_NODE, TERM_PROGRAM=vscode, etc.
+ * Copilot presence is confirmed by PATH containing copilot-chat
+ * or by the extension directory existing on disk.
+ */
+function detectVSCodeCopilot(): AgentSignal | null {
+  const evidence: string[] = [];
+
+  // Step 1: Confirm we're inside VS Code
+  const inVSCode =
+    process.env.TERM_PROGRAM === "vscode" ||
+    !!process.env.VSCODE_GIT_ASKPASS_NODE ||
+    !!process.env.VSCODE_GIT_IPC_HANDLE ||
+    !!process.env.VSCODE_PID;
+
+  if (!inVSCode) return null;
+  evidence.push("running inside VS Code terminal");
+
+  // Step 2: Confirm Copilot is present
+  let copilotFound = false;
+
+  // Check PATH for copilot-chat CLI injected by extension
+  const pathVar = process.env.PATH ?? "";
+  if (/github\.copilot/i.test(pathVar)) {
+    copilotFound = true;
+    evidence.push("PATH contains GitHub Copilot entry");
+  }
+
+  // Check extension directory on disk
+  if (!copilotFound) {
+    try {
+      const extDir = join(homedir(), ".vscode", "extensions");
+      if (existsSync(extDir)) {
+        const entries = readdirSync(extDir);
+        const copilotExt = entries.find((e) => /^github\.copilot/i.test(e));
+        if (copilotExt) {
+          copilotFound = true;
+          evidence.push(`Copilot extension installed: ${copilotExt}`);
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  if (!copilotFound) return null;
+
+  return {
+    source: "copilot-agent",
+    confidence: "high",
+    evidence,
+  };
 }
 
 function detectAgentEnv(agent: AgentDef): AgentSignal | null {
