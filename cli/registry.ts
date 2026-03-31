@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, copyFileSync, chmodSync } from "node:fs";
+import { join, relative, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 import { hashSnippet } from "../core/hasher.js";
 import type { Snippet, SnippetRegistry } from "../core/types.js";
 
@@ -14,16 +15,82 @@ function ensureDir(): void {
   }
 }
 
-/** Initialise the local snippet registry. */
+/** Find the .git directory for the current working directory. */
+function findGitDir(): string | null {
+  try {
+    const gitDir = execSync("git rev-parse --git-dir", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return gitDir;
+  } catch {
+    return null;
+  }
+}
+
+/** Install git hooks (pre-commit and commit-msg) into the repo's .git/hooks/. */
+function installGitHooks(): void {
+  const gitDir = findGitDir();
+  if (!gitDir) {
+    console.log("Not a git repository — skipping hook installation.");
+    return;
+  }
+
+  const hooksDir = join(gitDir, "hooks");
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+
+  const preCommitContent = `#!/bin/sh
+# ai-footprint pre-commit hook (auto-installed)
+npx ai-footprint hook --pre-commit
+`;
+
+  const commitMsgContent = `#!/bin/sh
+# ai-footprint commit-msg hook (auto-installed)
+npx ai-footprint hook --commit-msg "$1"
+`;
+
+  const preCommitPath = join(hooksDir, "pre-commit");
+  const commitMsgPath = join(hooksDir, "commit-msg");
+
+  let installed = 0;
+
+  if (existsSync(preCommitPath)) {
+    console.log("  pre-commit hook already exists — skipping (back up manually if needed).");
+  } else {
+    writeFileSync(preCommitPath, preCommitContent, { mode: 0o755 });
+    installed++;
+    console.log("  ✓ Installed pre-commit hook");
+  }
+
+  if (existsSync(commitMsgPath)) {
+    console.log("  commit-msg hook already exists — skipping (back up manually if needed).");
+  } else {
+    writeFileSync(commitMsgPath, commitMsgContent, { mode: 0o755 });
+    installed++;
+    console.log("  ✓ Installed commit-msg hook");
+  }
+
+  if (installed > 0) {
+    console.log(`Git hooks installed in ${hooksDir}`);
+  }
+}
+
+/** Initialise the local snippet registry and install git hooks. */
 export function init(): void {
   ensureDir();
   if (existsSync(REGISTRY_PATH)) {
     console.log(`Registry already exists at ${REGISTRY_PATH}`);
-    return;
+  } else {
+    const registry: SnippetRegistry = { version: 1, snippets: [] };
+    writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+    console.log(`Initialized snippet registry at ${REGISTRY_PATH}`);
   }
-  const registry: SnippetRegistry = { version: 1, snippets: [] };
-  writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
-  console.log(`Initialized snippet registry at ${REGISTRY_PATH}`);
+
+  // Always try to install hooks (even if registry existed)
+  console.log("\nInstalling git hooks...");
+  installGitHooks();
 }
 
 /** Load the registry from disk. */
