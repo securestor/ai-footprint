@@ -1,0 +1,5 @@
+#!/bin/sh
+# ai-footprint commit-msg hook
+# Install: cp git-hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+
+npx ai-footprint hook --commit-msg "$1"

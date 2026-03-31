@@ -1,0 +1,28 @@
+{
+  "name": "ai-footprint",
+  "version": "0.1.0",
+  "description": "Git-native provenance tracking for AI-generated code",
+  "bin": {
+    "ai-footprint": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli/index.js",
+    "dashboard": "node dist/cli/index.js dashboard"
+  },
+  "keywords": [
+    "ai",
+    "provenance",
+    "git",
+    "code-attribution"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

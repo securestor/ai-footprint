@@ -1,0 +1,98 @@
+name: "AI Footprint Scan"
+description: "CI-level provenance checks for AI-generated code in pull requests"
+author: "ai-footprint"
+
+branding:
+  icon: "eye"
+  color: "blue"
+
+inputs:
+  scan-path:
+    description: "Directory to scan (relative to repo root)"
+    required: false
+    default: "."
+  fuzzy-threshold:
+    description: "Minimum similarity score for fuzzy matching (0.0–1.0)"
+    required: false
+    default: "0.6"
+  fail-on-unattributed:
+    description: "Fail the check if unattributed suspicious AI code is found"
+    required: false
+    default: "false"
+  fail-threshold:
+    description: "Number of unattributed matches before failing (0 = any)"
+    required: false
+    default: "0"
+  post-comment:
+    description: "Post scan results as a PR comment"
+    required: false
+    default: "true"
+  github-token:
+    description: "GitHub token for posting PR comments and check annotations"
+    required: false
+    default: "${{ github.token }}"
+
+outputs:
+  files-analyzed:
+    description: "Total files analyzed"
+  ai-attributed:
+    description: "Number of files with attributed AI code"
+  unattributed-suspicious:
+    description: "Number of files with unattributed suspicious AI code"
+  top-model:
+    description: "Most frequently detected AI model"
+  total-matches:
+    description: "Total number of matches found"
+  report-json:
+    description: "Full scan report as JSON"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install AI Footprint
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}/../..
+        npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
+        npm run build
+
+    - name: Initialize registry
+      shell: bash
+      run: |
+        node ${{ github.action_path }}/../../dist/cli/index.js init 2>/dev/null || true
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.scan-path }}
+        FUZZY_THRESHOLD: ${{ inputs.fuzzy-threshold }}
+      run: |
+        node ${{ github.action_path }}/scripts/run-scan.mjs
+
+    - name: Annotate matches
+      if: steps.scan.outputs.total-matches != '0'
+      shell: bash
+      run: |
+        node ${{ github.action_path }}/scripts/annotate.mjs
+
+    - name: Post PR comment
+      if: inputs.post-comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        node ${{ github.action_path }}/scripts/comment.mjs
+
+    - name: Enforce policy
+      if: inputs.fail-on-unattributed == 'true'
+      shell: bash
+      env:
+        FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
+      run: |
+        node ${{ github.action_path }}/scripts/enforce.mjs

@@ -1,0 +1,84 @@
+{
+  "name": "ai-footprint-vscode",
+  "displayName": "AI Footprint",
+  "description": "In-editor attribution overlays for AI-generated code",
+  "version": "0.1.0",
+  "publisher": "ai-footprint",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiFootprint.scanWorkspace",
+        "title": "AI Footprint: Scan Workspace"
+      },
+      {
+        "command": "aiFootprint.scanCurrentFile",
+        "title": "AI Footprint: Scan Current File"
+      },
+      {
+        "command": "aiFootprint.toggleOverlay",
+        "title": "AI Footprint: Toggle Attribution Overlay"
+      },
+      {
+        "command": "aiFootprint.showReport",
+        "title": "AI Footprint: Show Report"
+      }
+    ],
+    "configuration": {
+      "title": "AI Footprint",
+      "properties": {
+        "aiFootprint.enableOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files on save."
+        },
+        "aiFootprint.fuzzyThreshold": {
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum similarity score for fuzzy matching (0.0–1.0)."
+        },
+        "aiFootprint.overlayEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline attribution overlays."
+        },
+        "aiFootprint.diagnosticSeverity": {
+          "type": "string",
+          "default": "Information",
+          "enum": ["Error", "Warning", "Information", "Hint"],
+          "description": "Severity level for AI-attribution diagnostics."
+        }
+      }
+    },
+    "colors": [
+      {
+        "id": "aiFootprint.attributionBackground",
+        "description": "Background color for AI-attributed lines.",
+        "defaults": {
+          "dark": "#1a3a4a40",
+          "light": "#d0e8f240",
+          "highContrast": "#00ff0020"
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "watch": "tsc -watch -p ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

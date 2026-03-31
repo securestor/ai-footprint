@@ -1,0 +1,70 @@
+# Enterprise CI Pipeline Example
+
+name: AI Code Governance
+
+on:
+  pull_request:
+    branches: [main, release/*]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  ai-footprint-scan:
+    name: AI Code Provenance Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [platform-api, mobile-app, data-service, auth-service, web-frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI Footprint Scan — ${{ matrix.service }}
+        uses: ./action
+        id: scan
+        with:
+          scan-path: "services/${{ matrix.service }}"
+          fuzzy-threshold: "0.6"
+          fail-on-unattributed: "true"
+          fail-threshold: "5"
+          post-comment: "true"
+
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-footprint-${{ matrix.service }}
+          path: |
+            ${{ steps.scan.outputs.report-json }}
+
+  compliance-gate:
+    name: Compliance Gate
+    needs: ai-footprint-scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all scan reports
+        uses: actions/download-artifact@v4
+
+      - name: Run compliance audit
+        run: |
+          echo "Running enterprise compliance audit..."
+          npx tsx examples/compliance-audit/run-audit.ts
+
+  notify:
+    name: Notify Security Team
+    needs: ai-footprint-scan
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Send alert
+        run: |
+          echo "::warning::AI code governance check failed. Security team notified."
+          # In production: post to Slack, PagerDuty, email, etc.

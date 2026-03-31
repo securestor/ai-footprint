@@ -1,0 +1,23 @@
+name: AI Footprint CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI Footprint Scan
+        uses: ./action
+        with:
+          scan-path: "."
+          fuzzy-threshold: "0.6"
+          fail-on-unattributed: "false"
+          post-comment: "true"
