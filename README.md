@@ -119,6 +119,8 @@ Git hooks intercept each commit and scan the staged diff. When AI code is detect
 | `ai-footprint intercept` | Start the LLM API interception proxy |
 | `ai-footprint intercept-status` | Check proxy status |
 | `ai-footprint treesitter` | Show tree-sitter native support status |
+| `ai-footprint audit` | Verify audit log integrity (hash chain) |
+| `ai-footprint security` | Harden permissions + verify registry signature |
 | `ai-footprint dashboard` | Launch the web dashboard (default port 3120) |
 | `ai-footprint hook` | Run as a git hook (used internally by hooks) |
 
@@ -323,6 +325,76 @@ ai-footprint intercept-status
 # Or visit http://localhost:8991/status
 ```
 
+The proxy applies a **default host allowlist** (OpenAI, Anthropic, Google AI, Azure OpenAI, Ollama, Cohere, Mistral, localhost) to prevent SSRF. Override with `--allowed-hosts api.custom.com,other.host`.
+
+## Security & Threat Model
+
+AI Footprint includes enterprise-grade security controls aligned with the **EU Cyber Resilience Act (CRA)**:
+
+### Registry integrity
+
+Every snippet registry can be **signed** (HMAC-SHA256) and **verified** against a locally generated 256-bit signing key (`~/.ai-footprint/signing-key`):
+
+```bash
+# Full security status — permissions, audit log, registry signature
+ai-footprint security
+```
+
+### Tamper-evident audit log
+
+A **hash-chained, append-only** audit log records all security-relevant operations — snippet additions, scans, team syncs, SBOM exports, proxy interceptions, permission fixes, and blocked requests:
+
+```bash
+# Verify the hash chain is intact
+ai-footprint audit
+```
+
+Each log entry contains a SHA-256 hash linking to the previous entry. Any tampering breaks the chain and is immediately detectable.
+
+### Input validation
+
+| Input | Validation |
+|---|---|
+| Git URLs | Scheme allowlist (https, git, ssh, SCP) + control char rejection |
+| API URLs | HTTPS enforced (localhost exempt) |
+| Team names | Alphanumeric + hyphens/underscores, max 128 chars |
+| Port numbers | Integer 1–65535 |
+| Output paths | Confined within CWD (prevents path traversal) |
+| Network data | Snippet schema validation, prototype pollution guard |
+
+### Command injection prevention
+
+All shell commands use `execFileSync` with **argument arrays** — no string interpolation into shells. Model names, team names, file paths, and git URLs are never template-interpolated into `execSync` calls.
+
+### File permission hardening
+
+Sensitive files (`signing-key`, `team.json`, `snippets.json`, `audit.log`) are automatically set to `0600` (owner-only read/write). The config directory uses `0700`.
+
+### Proxy security
+
+- **Default host allowlist** — only known LLM API endpoints reachable (prevents open relay / SSRF)
+- **Hop-by-hop header stripping** — prevents request smuggling
+- **Body size limits** — 50 MB max to prevent OOM
+- **Bind to localhost only** — not exposed to network
+
+### Symlink protection
+
+Directory walkers (scanner, registry) skip symbolic links to prevent traversal into unexpected directories.
+
+### CRA Compliance Matrix
+
+| CRA Requirement | Implementation |
+|---|---|
+| Art. 10(1) — Security by design | Signed registry, hash-chained audit, input validation at all boundaries |
+| Art. 11 — Vulnerability handling | Tamper-evident audit trail, `ai-footprint audit` command |
+| Annex I §2.1 — Data protection | Control char rejection, path confinement, HTTPS enforcement |
+| Annex I §2.2 — Availability | File/body size limits, graceful degradation (tree-sitter optional) |
+| Annex I §2.5 — Integrity | SHA-256 fingerprints, HMAC-SHA256 signatures, hash-chained logs |
+| Annex I §2.6 — Secure defaults | Host allowlist on, strict permissions, no open proxy |
+| Art. 10(7) — SBOM provision | CycloneDX 1.5 + SPDX 2.3 with AI provenance |
+
+Full threat model: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)
+
 ## Supported file types
 
 The scanner recognises files with these extensions:
@@ -335,13 +407,14 @@ The scanner recognises files with these extensions:
 npm test
 ```
 
-Runs 63 tests using Node.js built-in `node:test` — zero external test dependencies:
+Runs 107 tests using Node.js built-in `node:test` — zero external test dependencies:
 
 - **hasher** — normalisation, CRLF handling, SHA-256 determinism
 - **fuzzy** — tokenisation, n-gram shingling, Jaccard similarity, structural matching
 - **matcher** — exact hash, fuzzy match, all 5 pattern types, combined modes
 - **registry & scanner** — snippet CRUD, file walking, report structure
 - **hooks** — diff scanning, trailer generation, multi-model attribution
+- **security** — signing/verification, input validation, proto pollution, host allowlist, audit chain, port/path validation
 - **integration** — full pipeline, attribution precedence, CLI E2E
 
 ## Project structure
@@ -362,6 +435,7 @@ ai-footprint/
 │   ├── fuzzy.ts      # N-gram shingling + Jaccard similarity
 │   ├── ast-matcher.ts # Regex-based AST structural matching
 │   ├── treesitter-matcher.ts # Tree-sitter native matching (optional)
+│   ├── security.ts   # Crypto signing, audit log, input validation
 │   └── index.ts      # Barrel exports
 ├── git-hooks/        # pre-commit / commit-msg hook logic
 ├── extension/        # VS Code extension
@@ -373,11 +447,12 @@ ai-footprint/
 ├── dashboard/        # Web dashboard (server + embedded SPA)
 ├── action/           # GitHub Action (composite)
 │   └── scripts/      # scan, annotate, comment, enforce
-├── tests/            # Test suite (63 tests, node:test)
+├── tests/            # Test suite (107 tests, node:test)
 ├── examples/         # Demo projects (5 enterprise examples)
 ├── docs/
 │   ├── architecture.md
-│   └── how-it-works.md
+│   ├── how-it-works.md
+│   └── THREAT-MODEL.md  # STRIDE analysis + CRA compliance matrix
 ├── scripts/          # User scripts
 ├── README.md
 ├── LICENSE
@@ -397,6 +472,7 @@ ai-footprint/
 - [x] Tree-sitter native — optional tree-sitter binary for deeper AST analysis
 - [x] IDE plugins — JetBrains (IntelliJ/WebStorm/PyCharm) + Neovim
 - [x] Auto-detect from LLM APIs — intercept proxy auto-registers code from API responses
+- [x] Security hardening — HMAC-SHA256 registry signing, hash-chained audit log, STRIDE threat model, CRA compliance
 - [ ] Emacs plugin — flycheck integration + mode-line widget
 - [ ] Sublime Text plugin — inline phantoms + build system integration
 - [ ] CI/CD dashboards — Grafana / Datadog integration for enterprise metrics

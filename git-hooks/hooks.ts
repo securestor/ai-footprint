@@ -1,6 +1,7 @@
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { matchFile } from "../core/matcher.js";
 import { loadRegistry } from "../cli/registry.js";
+import { audit, validateNoControlChars } from "../core/security.js";
 
 /**
  * Pre-commit hook logic.
@@ -38,6 +39,7 @@ export function preCommit(): void {
   if (models.size > 0) parts.push(`model(s): ${[...models].join(", ")}`);
 
   const trailer = parts.join("; ");
+  audit("hook.pre-commit", `Detected ${matches.length} match(es)`);
   console.log(`[ai-footprint] Detected AI code — ${trailer}`);
 
   // Store as a git note on HEAD after commit (called from commit-msg hook)
@@ -74,9 +76,18 @@ export function commitMsg(commitMsgFile: string): void {
     .filter(Boolean)
     .join("; ");
 
-  // Append trailer using git interpret-trailers
-  execSync(
-    `git interpret-trailers --in-place --trailer "AI-Footprint: ${value}" "${commitMsgFile}"`,
-  );
+  // Sanitise model names and commit message path to prevent injection
+  validateNoControlChars(value, "trailer value");
+  validateNoControlChars(commitMsgFile, "commit message file path");
+
+  // Use execFileSync with argument array — no shell interpolation
+  execFileSync("git", [
+    "interpret-trailers",
+    "--in-place",
+    "--trailer",
+    `AI-Footprint: ${value}`,
+    commitMsgFile,
+  ]);
+  audit("hook.commit-msg", `Added trailer: ${value}`);
   console.log(`[ai-footprint] Added trailer → AI-Footprint: ${value}`);
 }

@@ -13,10 +13,19 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Snippet, SnippetRegistry, TeamRegistryConfig } from "../core/types.js";
 import { loadRegistry } from "./registry.js";
+import {
+  audit,
+  validateGitUrl,
+  validateApiUrl,
+  validateTeamName,
+  validateNoControlChars,
+  validateSnippet,
+  validateRegistry,
+} from "../core/security.js";
 
 const CONFIG_DIR = join(homedir(), ".ai-footprint");
 const TEAM_CONFIG_PATH = join(CONFIG_DIR, "team.json");
@@ -36,9 +45,9 @@ export function loadTeamConfig(): TeamRegistryConfig | null {
 /** Save team registry configuration. */
 export function saveTeamConfig(config: TeamRegistryConfig): void {
   if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
-  writeFileSync(TEAM_CONFIG_PATH, JSON.stringify(config, null, 2));
+  writeFileSync(TEAM_CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
 /** Configure the team registry. */
@@ -59,7 +68,13 @@ export function configureTeam(opts: {
     throw new Error("Either --git-url or --api-url is required.");
   }
 
+  // Validate inputs
+  if (config.gitUrl) validateGitUrl(config.gitUrl);
+  if (config.apiUrl) validateApiUrl(config.apiUrl);
+  if (config.team) validateTeamName(config.team);
+
   saveTeamConfig(config);
+  audit("team.config", `Configured: git=${!!config.gitUrl} api=${!!config.apiUrl} team=${config.team}`);
   console.log("Team registry configured:");
   if (config.gitUrl) console.log(`  Git URL: ${config.gitUrl}`);
   if (config.apiUrl) console.log(`  API URL: ${config.apiUrl}`);
@@ -77,7 +92,7 @@ function gitSync(gitUrl: string): string {
   if (existsSync(TEAM_REPO_DIR)) {
     // Pull latest
     try {
-      execSync("git pull --rebase", {
+      execFileSync("git", ["pull", "--rebase"], {
         cwd: TEAM_REPO_DIR,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -86,10 +101,10 @@ function gitSync(gitUrl: string): string {
       throw new Error(`Failed to pull team registry from ${gitUrl}`);
     }
   } else {
-    // Clone
+    // Clone — use execFileSync with separate args (no shell injection)
     mkdirSync(TEAM_REPO_DIR, { recursive: true });
     try {
-      execSync(`git clone ${gitUrl} ${TEAM_REPO_DIR}`, {
+      execFileSync("git", ["clone", gitUrl, TEAM_REPO_DIR], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -141,20 +156,21 @@ function gitPushSnippets(gitUrl: string, snippets: Snippet[], team: string): num
   writeFileSync(registryFile, JSON.stringify(remote, null, 2));
 
   try {
-    execSync("git add snippets.json", {
+    execFileSync("git", ["add", "snippets.json"], {
       cwd: TEAM_REPO_DIR,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
-    execSync(
-      `git commit -m "ai-footprint: sync ${added} snippet(s) from team ${team}"`,
+    execFileSync(
+      "git",
+      ["commit", "-m", `ai-footprint: sync ${added} snippet(s) from team ${team}`],
       {
         cwd: TEAM_REPO_DIR,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
-    execSync("git push", {
+    execFileSync("git", ["push"], {
       cwd: TEAM_REPO_DIR,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -163,6 +179,7 @@ function gitPushSnippets(gitUrl: string, snippets: Snippet[], team: string): num
     throw new Error("Failed to push to team registry. Check git credentials and permissions.");
   }
 
+  audit("team.push", `Pushed ${added} snippet(s) to team ${team}`);
   return added;
 }
 
@@ -188,8 +205,15 @@ async function apiFetchSnippets(
     throw new Error(`API fetch failed: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as { snippets: Snippet[] };
-  return data.snippets;
+  const data = await response.json();
+  // Validate response against expected schema
+  if (typeof data !== "object" || data === null || !Array.isArray((data as Record<string, unknown>).snippets)) {
+    throw new Error("API response has unexpected format.");
+  }
+  const snippets = ((data as Record<string, unknown>).snippets as unknown[]).filter(
+    (s): s is Snippet => validateSnippet(s) as boolean,
+  ) as Snippet[];
+  return snippets;
 }
 
 /** Push snippets to the API-backed registry. */

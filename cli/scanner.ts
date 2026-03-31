@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, lstatSync } from "node:fs";
 import { join, relative } from "node:path";
 import { matchFile } from "../core/matcher.js";
 import { loadRegistry } from "./registry.js";
+import { MAX_FILE_SIZE } from "../core/security.js";
 import type { ScanMatch, ScanOptions, ScanReport } from "../core/types.js";
 
 const IGNORED_DIRS = new Set([
@@ -27,6 +28,10 @@ function collectFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (IGNORED_DIRS.has(entry.name)) continue;
     const full = join(dir, entry.name);
+    // Skip symlinks to prevent traversal into unexpected directories
+    try {
+      if (lstatSync(full).isSymbolicLink()) continue;
+    } catch { continue; }
     if (entry.isDirectory()) {
       results.push(...collectFiles(full));
     } else if (CODE_EXTENSIONS.has(extOf(entry.name))) {
@@ -50,6 +55,11 @@ export function scan(targetDir: string, options: ScanOptions = {}): ScanReport {
   const modelCounts = new Map<string, number>();
 
   for (const file of files) {
+    // Enforce file size limit to prevent OOM
+    try {
+      const stat = lstatSync(file);
+      if (stat.size > MAX_FILE_SIZE) continue;
+    } catch { continue; }
     const content = readFileSync(file, "utf-8");
     const relPath = relative(targetDir, file);
     const matches = matchFile(relPath, content, registry.snippets, options);

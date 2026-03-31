@@ -1,10 +1,11 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, copyFileSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, lstatSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { hashSnippet } from "../core/hasher.js";
 import type { Snippet, SnippetRegistry } from "../core/types.js";
+import { audit, MAX_FILE_SIZE } from "../core/security.js";
 
 const CONFIG_DIR = join(homedir(), ".ai-footprint");
 const REGISTRY_PATH = join(CONFIG_DIR, "snippets.json");
@@ -126,6 +127,7 @@ export function addSnippet(opts: {
   };
   registry.snippets.push(snippet);
   saveRegistry(registry);
+  audit("snippet.add", `Added snippet ${snippet.id} (hash: ${snippet.hash.slice(0, 12)})`);
   return snippet;
 }
 
@@ -145,6 +147,10 @@ function collectCodeFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (IGNORED_DIRS.has(entry.name)) continue;
     const full = join(dir, entry.name);
+    // Skip symlinks to prevent traversal into unexpected directories
+    try {
+      if (lstatSync(full).isSymbolicLink()) continue;
+    } catch { continue; }
     if (entry.isDirectory()) {
       results.push(...collectCodeFiles(full));
     } else {

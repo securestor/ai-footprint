@@ -18,6 +18,13 @@ import { URL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { addSnippet, loadRegistry } from "./registry.js";
 import { hashSnippet } from "../core/hasher.js";
+import {
+  audit,
+  isAllowedLLMHost,
+  collectBodyLimited,
+  MAX_BODY_SIZE,
+  validatePort,
+} from "../core/security.js";
 
 // ------------------------------------------------------------------ //
 // Known LLM API endpoint patterns
@@ -253,15 +260,10 @@ export interface InterceptOptions {
 }
 
 /**
- * Collect the full body from an IncomingMessage stream.
+ * Collect the full body from an IncomingMessage stream with size limit.
  */
 function collectBody(stream: IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
-  });
+  return collectBodyLimited(stream as unknown as { on: (event: string, cb: (...args: unknown[]) => void) => void }, MAX_BODY_SIZE);
 }
 
 /**
@@ -272,11 +274,17 @@ function collectBody(stream: IncomingMessage): Promise<Buffer> {
  */
 export function startInterceptProxy(opts: InterceptOptions = {}): void {
   const port = opts.port ?? 8990;
+  validatePort(port);
+  validatePort(port + 1); // status port
   const minLen = opts.minCodeLength ?? 20;
   const minLines = opts.minCodeLines ?? 2;
   const verbose = opts.verbose ?? false;
+  // Use explicit allowlist if provided; otherwise default to known LLM API hosts
+  const customAllowlist = opts.allowedHosts && opts.allowedHosts.length > 0;
   const allowedHosts = new Set(opts.allowedHosts ?? []);
   const stats = createStats();
+
+  audit("proxy.start", `Starting intercept proxy on port ${port}`);
 
   // Pre-load existing hashes for dedup
   const existingHashes = new Set(loadRegistry().snippets.map((s) => s.hash));
@@ -299,7 +307,7 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
           clientRes.end("Missing Host header");
           return;
         }
-        const proto = clientReq.headers["x-forwarded-proto"] === "https" ? "https" : "https";
+        const proto = clientReq.headers["x-forwarded-proto"] === "https" ? "https" : "http";
         targetUrl = new URL(`${proto}://${host}${clientReq.url}`);
       }
     } catch {
@@ -309,9 +317,16 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
     }
 
     // --- Host allowlist ---
-    if (allowedHosts.size > 0 && !allowedHosts.has(targetUrl.hostname)) {
+    // If a custom allowlist is provided, use it exclusively.
+    // Otherwise, use the default known LLM API host list to prevent open proxy / SSRF.
+    const hostAllowed = customAllowlist
+      ? allowedHosts.has(targetUrl.hostname)
+      : isAllowedLLMHost(targetUrl.hostname);
+
+    if (!hostAllowed) {
+      audit("security.host-blocked", `Blocked request to ${targetUrl.hostname}`);
       clientRes.writeHead(403, { "Content-Type": "text/plain" });
-      clientRes.end(`Host ${targetUrl.hostname} not in allowlist`);
+      clientRes.end(`Host ${targetUrl.hostname} not in allowlist. Use --allowed-hosts to add it.`);
       return;
     }
 
@@ -341,10 +356,14 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
     const isHttps = targetUrl.protocol === "https:";
     const reqFn = isHttps ? httpsRequest : httpRequest;
 
-    // Copy headers, removing proxy-specific ones
+    // Copy headers, removing proxy-specific and hop-by-hop headers
+    const HOP_BY_HOP = new Set([
+      "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+      "te", "trailers", "transfer-encoding", "upgrade", "proxy-connection",
+    ]);
     const forwardHeaders: Record<string, string> = {};
     for (const [key, value] of Object.entries(clientReq.headers)) {
-      if (key === "host" || key === "proxy-authorization") continue;
+      if (key === "host" || HOP_BY_HOP.has(key.toLowerCase())) continue;
       if (value) forwardHeaders[key] = Array.isArray(value) ? value.join(", ") : value;
     }
     forwardHeaders["host"] = targetUrl.host;

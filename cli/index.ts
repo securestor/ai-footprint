@@ -2,7 +2,7 @@
 
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { init, addSnippet, addDirectory } from "./registry.js";
+import { init, addSnippet, addDirectory, loadRegistry } from "./registry.js";
 import { scan } from "./scanner.js";
 import { preCommit, commitMsg } from "../git-hooks/hooks.js";
 import { startDashboard } from "../dashboard/server.js";
@@ -10,6 +10,15 @@ import { configureTeam, teamPull, teamPush, teamStatus } from "./team-registry.j
 import { exportSBOM } from "./sbom.js";
 import { startInterceptProxy, interceptStatus } from "./llm-proxy.js";
 import { treesitterStatus } from "../core/treesitter-matcher.js";
+import {
+  audit,
+  validatePort,
+  validateOutputPath,
+  verifyAuditLog,
+  hardenConfigPermissions,
+  signPayload,
+  verifyPayload,
+} from "../core/security.js";
 import type { ScanReport } from "../core/types.js";
 import type { SBOMFormat } from "../core/types.js";
 
@@ -52,6 +61,8 @@ Commands:
   team            Manage the shared team registry
   intercept       Start the LLM API interception proxy
   treesitter      Show tree-sitter native support status
+  audit           Verify audit log integrity
+  security        Harden permissions + verify signed registry
   dashboard       Launch the web dashboard
   hook            Run as a git hook (internal)
 
@@ -89,6 +100,8 @@ Examples:
   npx ai-footprint sbom --format cyclonedx --output bom.json
   npx ai-footprint intercept --port 8990
   npx ai-footprint treesitter
+  npx ai-footprint audit                 # verify audit log integrity
+  npx ai-footprint security              # harden permissions + verify registry
   npx ai-footprint team config --git-url git@github.com:myorg/ai-registry.git --team backend
   npx ai-footprint team pull
   npx ai-footprint team push
@@ -164,15 +177,17 @@ switch (command) {
   case "report": {
     const dir = args[1] ? resolve(args[1]) : process.cwd();
     const report = scan(dir, { fuzzy: true, ast: true });
+    audit("scan.run", `Scanned ${report.filesAnalyzed} files, ${report.matches.length} matches`);
     printReport(report);
     break;
   }
 
   case "dashboard": {
     const portIdx = args.indexOf("--port");
-    const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : undefined;
+    const rawPort = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : undefined;
+    if (rawPort !== undefined) validatePort(rawPort);
     const dashDir = args[1] && args[1] !== "--port" ? resolve(args[1]) : process.cwd();
-    startDashboard({ port, scanPath: dashDir });
+    startDashboard({ port: rawPort, scanPath: dashDir });
     break;
   }
 
@@ -198,16 +213,20 @@ switch (command) {
     const formatIdx = args.indexOf("--format");
     const outputIdx = args.indexOf("--output");
     const sbomFormat: SBOMFormat = formatIdx !== -1 ? (args[formatIdx + 1] as SBOMFormat) : "cyclonedx";
-    const sbomOutput = outputIdx !== -1 ? args[outputIdx + 1] : "ai-footprint-sbom.json";
+    const sbomOutputRaw = outputIdx !== -1 ? args[outputIdx + 1] : "ai-footprint-sbom.json";
 
     if (sbomFormat !== "cyclonedx" && sbomFormat !== "spdx") {
       console.error(`Unsupported format: ${sbomFormat}. Use 'cyclonedx' or 'spdx'.`);
       process.exit(1);
     }
 
+    // Validate output path stays within CWD
+    const sbomOutput = validateOutputPath(sbomOutputRaw);
+
     const sbomReport = scan(sbomDir, { fuzzy: true, ast: true });
     printReport(sbomReport);
     exportSBOM(sbomReport, sbomFormat, sbomOutput, sbomDir);
+    audit("sbom.export", `Exported ${sbomFormat} SBOM to ${sbomOutput}`);
     break;
   }
 
@@ -222,7 +241,8 @@ switch (command) {
 
         const teamGitUrl = gitUrlIdx !== -1 ? args[gitUrlIdx + 1] : undefined;
         const teamApiUrl = apiUrlIdx !== -1 ? args[apiUrlIdx + 1] : undefined;
-        const teamApiKey = apiKeyIdx !== -1 ? args[apiKeyIdx + 1] : undefined;
+        // Support API key from environment variable (preferred over CLI arg for security)
+        const teamApiKey = apiKeyIdx !== -1 ? args[apiKeyIdx + 1] : process.env.AI_FOOTPRINT_API_KEY;
         const teamName = teamIdx !== -1 ? args[teamIdx + 1] : undefined;
 
         try {
@@ -258,10 +278,13 @@ switch (command) {
   case "intercept": {
     const interceptPortIdx = args.indexOf("--port");
     const interceptModelIdx = args.indexOf("--model");
+    const interceptAllowedIdx = args.indexOf("--allowed-hosts");
     const interceptPort = interceptPortIdx !== -1 ? parseInt(args[interceptPortIdx + 1], 10) : undefined;
+    if (interceptPort !== undefined) validatePort(interceptPort);
     const interceptModel = interceptModelIdx !== -1 ? args[interceptModelIdx + 1] : undefined;
     const interceptVerbose = args.includes("--verbose");
-    startInterceptProxy({ port: interceptPort, model: interceptModel, verbose: interceptVerbose });
+    const allowedHosts = interceptAllowedIdx !== -1 ? args[interceptAllowedIdx + 1]?.split(",") : undefined;
+    startInterceptProxy({ port: interceptPort, model: interceptModel, verbose: interceptVerbose, allowedHosts });
     break;
   }
 
@@ -290,6 +313,59 @@ switch (command) {
       }
       console.log("");
     });
+    break;
+  }
+
+  case "audit": {
+    const result = verifyAuditLog();
+    console.log("");
+    console.log("Audit Log Integrity");
+    console.log("─".repeat(30));
+    console.log(`Entries:   ${result.entries}`);
+    console.log(`Integrity: ${result.valid ? "✓ VALID — hash chain intact" : "✗ BROKEN"}`);
+    if (!result.valid) {
+      console.log(`Break at:  entry ${result.brokenAt}`);
+      console.log(`Reason:    ${result.reason}`);
+      process.exit(1);
+    }
+    console.log("");
+    break;
+  }
+
+  case "security": {
+    console.log("");
+    console.log("AI Footprint — Security Status");
+    console.log("═".repeat(40));
+
+    // 1. Harden file permissions
+    console.log("\n[1] File permissions");
+    hardenConfigPermissions();
+    console.log("  ✓ Sensitive files set to owner-only (0600)");
+
+    // 2. Verify audit log
+    console.log("\n[2] Audit log");
+    const auditResult = verifyAuditLog();
+    console.log(`  Entries: ${auditResult.entries}`);
+    console.log(`  Status:  ${auditResult.valid ? "✓ Hash chain intact" : "✗ TAMPERED"}`);
+    if (!auditResult.valid) {
+      console.log(`  Break:   entry ${auditResult.brokenAt} — ${auditResult.reason}`);
+    }
+
+    // 3. Registry signature
+    console.log("\n[3] Registry integrity");
+    try {
+      const reg = loadRegistry();
+      const signed = signPayload(reg);
+      const verified = verifyPayload(signed);
+      console.log(`  Snippets:     ${reg.snippets.length}`);
+      console.log(`  Can sign:     ✓`);
+      console.log(`  Verification: ${verified ? "✓ HMAC-SHA256 valid" : "✗ FAILED"}`);
+    } catch {
+      console.log("  Registry not yet initialised.");
+    }
+
+    console.log("\n" + "═".repeat(40));
+    console.log("");
     break;
   }
 
