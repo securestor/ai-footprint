@@ -36,6 +36,10 @@
       {
         "command": "aiFootprint.showReport",
         "title": "AI Footprint: Show Report"
+      },
+      {
+        "command": "aiFootprint.markCopilotEdit",
+        "title": "AI Footprint: Mark File as Copilot Edit"
       }
     ],
     "configuration": {

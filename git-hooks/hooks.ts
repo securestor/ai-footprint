@@ -1,7 +1,14 @@
 import { execSync, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { matchFile } from "../core/matcher.js";
 import { loadRegistry } from "../cli/registry.js";
 import { audit, validateNoControlChars } from "../core/security.js";
+import {
+  detectCopilotSignals,
+  formatCopilotTrailer,
+  clearCopilotMarker,
+  findGitRoot,
+} from "../core/copilot-detect.js";
 
 /**
  * Pre-commit hook logic.
@@ -47,38 +54,81 @@ export function preCommit(): void {
 }
 
 /**
+ * Pre-commit hook logic — Copilot agent check.
+ * Detects Copilot signals even when no AI code patterns are found.
+ * Called after the standard preCommit() scan.
+ */
+export function preCommitCopilot(): void {
+  const repoRoot = findGitRoot();
+  const signals = detectCopilotSignals({ repoRoot: repoRoot ?? undefined });
+  if (signals.length === 0) return;
+
+  const copilotTrailer = formatCopilotTrailer(signals);
+  const evidence = signals.flatMap((s) => s.evidence);
+  audit("hook.pre-commit", `Copilot detected: ${copilotTrailer}`);
+  console.log(`[ai-footprint] Copilot agent detected — ${copilotTrailer}`);
+  for (const e of evidence) {
+    console.log(`  • ${e}`);
+  }
+}
+
+/**
  * commit-msg hook logic.
- * Appends an AI-Footprint trailer to the commit message file if AI code detected.
+ * Appends an AI-Footprint trailer to the commit message file if AI code detected,
+ * or if Copilot agent signals are present.
  */
 export function commitMsg(commitMsgFile: string): void {
+  // Sanitise the commit message file path early
+  validateNoControlChars(commitMsgFile, "commit message file path");
+
   const diff = execSync("git diff --cached --unified=0", {
     encoding: "utf-8",
   });
 
-  if (!diff) return;
-
   const registry = loadRegistry();
-  const matches = matchFile("staged-diff", diff, registry.snippets);
+  const matches = diff ? matchFile("staged-diff", diff, registry.snippets) : [];
 
-  if (matches.length === 0) return;
-
-  const models = new Set<string>();
-  let total = matches.length;
-
-  for (const m of matches) {
-    if (m.snippet?.model) models.add(m.snippet.model);
+  // Read commit message for Copilot pattern detection
+  let commitMessage = "";
+  try {
+    commitMessage = readFileSync(commitMsgFile, "utf-8");
+  } catch {
+    /* best-effort */
   }
 
-  const value = [
-    `${total} match(es)`,
-    models.size > 0 ? `model(s): ${[...models].join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join("; ");
+  // Check for Copilot agent signals
+  const repoRoot = findGitRoot();
+  const copilotSignals = detectCopilotSignals({
+    commitMessage,
+    repoRoot: repoRoot ?? undefined,
+  });
 
-  // Sanitise model names and commit message path to prevent injection
+  // Nothing detected at all — bail
+  if (matches.length === 0 && copilotSignals.length === 0) return;
+
+  // Build trailer parts
+  const trailerParts: string[] = [];
+
+  // Code pattern matches
+  if (matches.length > 0) {
+    const models = new Set<string>();
+    for (const m of matches) {
+      if (m.snippet?.model) models.add(m.snippet.model);
+    }
+    trailerParts.push(`${matches.length} match(es)`);
+    if (models.size > 0) {
+      trailerParts.push(`model(s): ${[...models].join(", ")}`);
+    }
+  }
+
+  // Copilot agent attribution
+  if (copilotSignals.length > 0) {
+    trailerParts.push(formatCopilotTrailer(copilotSignals));
+  }
+
+  const value = trailerParts.join("; ");
+
   validateNoControlChars(value, "trailer value");
-  validateNoControlChars(commitMsgFile, "commit message file path");
 
   // Use execFileSync with argument array — no shell interpolation
   execFileSync("git", [
@@ -88,6 +138,12 @@ export function commitMsg(commitMsgFile: string): void {
     `AI-Footprint: ${value}`,
     commitMsgFile,
   ]);
+
+  // Clear the Copilot marker file after successful attribution
+  if (copilotSignals.length > 0 && repoRoot) {
+    clearCopilotMarker(repoRoot);
+  }
+
   audit("hook.commit-msg", `Added trailer: ${value}`);
   console.log(`[ai-footprint] Added trailer → AI-Footprint: ${value}`);
 }

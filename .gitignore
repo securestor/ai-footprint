@@ -3,6 +3,9 @@ dist/
 *.js.map
 *.tsbuildinfo
 
+# Copilot tracking marker (transient, written by extension)
+.ai-footprint/copilot-pending.json
+
 # VS Code extension
 extension/out/
 extension/*.vsix

@@ -4,17 +4,23 @@ import { OverlayManager } from "./overlay.js";
 import { DiagnosticsManager } from "./diagnostics.js";
 import { StatusBarManager } from "./statusBar.js";
 import { ReportPanel } from "./reportPanel.js";
+import { CopilotTracker } from "./copilotTracker.js";
 
 let scanner: Scanner;
 let overlay: OverlayManager;
 let diagnostics: DiagnosticsManager;
 let statusBar: StatusBarManager;
+let copilotTracker: CopilotTracker;
 
 export function activate(context: vscode.ExtensionContext): void {
   scanner = new Scanner();
   overlay = new OverlayManager();
   diagnostics = new DiagnosticsManager();
   statusBar = new StatusBarManager();
+  copilotTracker = new CopilotTracker();
+
+  // Activate Copilot tracking
+  copilotTracker.activate(context);
 
   // Register commands
   context.subscriptions.push(
@@ -79,6 +85,7 @@ export function activate(context: vscode.ExtensionContext): void {
     overlay,
     diagnostics,
     statusBar,
+    copilotTracker,
   );
 
   statusBar.show();
