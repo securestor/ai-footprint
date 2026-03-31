@@ -140,6 +140,8 @@ const CODE_EXTENSIONS = new Set([
   ".py", ".rb", ".go", ".rs", ".java", ".kt",
   ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
   ".vue", ".svelte", ".astro",
+  ".sh", ".bash", ".zsh", ".fish",
+  ".md",
 ]);
 
 function collectCodeFiles(dir: string): string[] {

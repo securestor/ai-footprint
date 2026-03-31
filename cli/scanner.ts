@@ -21,6 +21,7 @@ const CODE_EXTENSIONS = new Set([
   ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
   ".vue", ".svelte", ".astro",
   ".sh", ".bash", ".zsh", ".fish",
+  ".md",
 ]);
 
 function collectFiles(dir: string): string[] {
