@@ -5,10 +5,16 @@
   "version": "0.1.0",
   "publisher": "ai-footprint",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ai-footprint/ai-footprint"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -55,7 +61,12 @@
         "aiFootprint.diagnosticSeverity": {
           "type": "string",
           "default": "Information",
-          "enum": ["Error", "Warning", "Information", "Hint"],
+          "enum": [
+            "Error",
+            "Warning",
+            "Information",
+            "Hint"
+          ],
           "description": "Severity level for AI-attribution diagnostics."
         }
       }
@@ -77,8 +88,9 @@
     "watch": "tsc -watch -p ./tsconfig.json"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
     "typescript": "^5.4.0"
   }
 }

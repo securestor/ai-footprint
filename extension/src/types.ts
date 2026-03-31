@@ -23,13 +23,15 @@ export interface ScanMatch {
   pattern?: string;
   confidence: "high" | "medium" | "low";
   similarity?: number;
-  matchType?: "exact" | "fuzzy" | "pattern";
+  matchType?: "exact" | "fuzzy" | "pattern" | "ast";
 }
 
 export interface ScanOptions {
   fuzzy?: boolean;
   fuzzyThreshold?: number;
   ngramSize?: number;
+  ast?: boolean;
+  astThreshold?: number;
 }
 
 export interface ScanReport {
