@@ -54,23 +54,27 @@ export function preCommit(): void {
 }
 
 /**
- * Pre-commit hook logic — Copilot agent check.
- * Detects Copilot signals even when no AI code patterns are found.
+ * Pre-commit hook logic — AI agent check.
+ * Detects AI agent signals (Copilot, Claude Code, Cursor, Lovable)
+ * even when no AI code patterns are found.
  * Called after the standard preCommit() scan.
  */
-export function preCommitCopilot(): void {
+export function preCommitAgentCheck(): void {
   const repoRoot = findGitRoot();
   const signals = detectCopilotSignals({ repoRoot: repoRoot ?? undefined });
   if (signals.length === 0) return;
 
-  const copilotTrailer = formatCopilotTrailer(signals);
+  const agentTrailer = formatCopilotTrailer(signals);
   const evidence = signals.flatMap((s) => s.evidence);
-  audit("hook.pre-commit", `Copilot detected: ${copilotTrailer}`);
-  console.log(`[ai-footprint] Copilot agent detected — ${copilotTrailer}`);
+  audit("hook.pre-commit", `AI agent detected: ${agentTrailer}`);
+  console.log(`[ai-footprint] AI agent detected — ${agentTrailer}`);
   for (const e of evidence) {
     console.log(`  • ${e}`);
   }
 }
+
+// Backward-compat alias
+export { preCommitAgentCheck as preCommitCopilot };
 
 /**
  * commit-msg hook logic.
@@ -96,15 +100,15 @@ export function commitMsg(commitMsgFile: string): void {
     /* best-effort */
   }
 
-  // Check for Copilot agent signals
+  // Check for AI agent signals (Copilot, Claude Code, Cursor, Lovable)
   const repoRoot = findGitRoot();
-  const copilotSignals = detectCopilotSignals({
+  const agentSignals = detectCopilotSignals({
     commitMessage,
     repoRoot: repoRoot ?? undefined,
   });
 
   // Nothing detected at all — bail
-  if (matches.length === 0 && copilotSignals.length === 0) return;
+  if (matches.length === 0 && agentSignals.length === 0) return;
 
   // Build trailer parts
   const trailerParts: string[] = [];
@@ -121,9 +125,9 @@ export function commitMsg(commitMsgFile: string): void {
     }
   }
 
-  // Copilot agent attribution
-  if (copilotSignals.length > 0) {
-    trailerParts.push(formatCopilotTrailer(copilotSignals));
+  // AI agent attribution (Copilot, Claude Code, Cursor, Lovable)
+  if (agentSignals.length > 0) {
+    trailerParts.push(formatCopilotTrailer(agentSignals));
   }
 
   const value = trailerParts.join("; ");
@@ -139,8 +143,8 @@ export function commitMsg(commitMsgFile: string): void {
     commitMsgFile,
   ]);
 
-  // Clear the Copilot marker file after successful attribution
-  if (copilotSignals.length > 0 && repoRoot) {
+  // Clear the agent marker file after successful attribution
+  if (agentSignals.length > 0 && repoRoot) {
     clearCopilotMarker(repoRoot);
   }
 

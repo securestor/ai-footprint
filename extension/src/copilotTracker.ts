@@ -9,30 +9,48 @@ import {
 import { join, relative } from "node:path";
 
 /**
- * Tracks Copilot-originated edits and writes a marker file so that
+ * Tracks AI-agent-originated edits and writes a marker file so that
  * the AI Footprint git hook can attribute commits accurately — even when
  * the generated code contains no detectable AI patterns.
  *
+ * Supported agents:
+ *  - GitHub Copilot (VS Code extension)
+ *  - Cursor (detected via env var at startup — Cursor is a VS Code fork)
+ *  - Claude Code (detected via CLAUDE_CODE env var when shell-integrated)
+ *
  * Detection heuristic:
- *  1. Checks if GitHub Copilot Chat extension is installed & active.
- *  2. Listens for document changes that occur while Copilot is active.
- *  3. Uses edit-burst detection (rapid successive programmatic edits on
+ *  1. Checks if known AI coding extensions are installed & active.
+ *  2. Checks environment variables for Cursor / Claude Code identity.
+ *  3. Listens for document changes that occur while an agent is active.
+ *  4. Uses edit-burst detection (rapid successive programmatic edits on
  *     a file without corresponding cursor movements) as a signal that
  *     an AI agent is applying changes.
- *  4. Writes changed files to `.ai-footprint/copilot-pending.json`.
+ *  5. Writes changed files to `.ai-footprint/copilot-pending.json`.
  *
  * The marker file is consumed (and cleared) by the commit-msg git hook.
  */
 
-const COPILOT_EXTENSION_IDS = [
-  "github.copilot-chat",
-  "github.copilot",
+// ------------------------------------------------------------------ //
+// Known AI-coding extension IDs
+// ------------------------------------------------------------------ //
+
+interface AgentExtension {
+  id: string;
+  agent: string;
+}
+
+const AI_EXTENSIONS: AgentExtension[] = [
+  { id: "github.copilot-chat", agent: "copilot-agent" },
+  { id: "github.copilot", agent: "copilot-agent" },
+  { id: "anthropics.claude-code", agent: "claude-code" },
+  { id: "saoudrizwan.claude-dev", agent: "claude-code" },  // Cline (Claude Dev)
+  { id: "continue.continue", agent: "claude-code" },       // Continue.dev
 ];
 
 const MARKER_DIR = ".ai-footprint";
 const MARKER_FILE = "copilot-pending.json";
 
-/** Minimum burst of programmatic edits in a window to flag as Copilot. */
+/** Minimum burst of programmatic edits in a window to flag as agent. */
 const BURST_THRESHOLD = 3;
 const BURST_WINDOW_MS = 1000;
 
@@ -43,22 +61,22 @@ interface EditBurst {
 
 export class CopilotTracker implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
-  private copilotActive = false;
+  private activeAgent: string | null = null;
   private pendingFiles = new Set<string>();
   private editBursts = new Map<string, EditBurst>();
   private outputChannel: vscode.OutputChannel;
 
   constructor() {
-    this.outputChannel = vscode.window.createOutputChannel("AI Footprint — Copilot Tracker");
+    this.outputChannel = vscode.window.createOutputChannel("AI Footprint — Agent Tracker");
   }
 
   activate(context: vscode.ExtensionContext): void {
-    // Check if Copilot is installed
-    this.refreshCopilotStatus();
+    // Check which AI agents are present
+    this.refreshAgentStatus();
 
     // Re-check when extensions change
     this.disposables.push(
-      vscode.extensions.onDidChange(() => this.refreshCopilotStatus()),
+      vscode.extensions.onDidChange(() => this.refreshAgentStatus()),
     );
 
     // Listen for document changes
@@ -78,34 +96,56 @@ export class CopilotTracker implements vscode.Disposable {
       }),
     );
 
-    this.outputChannel.appendLine("Copilot tracker activated");
+    this.outputChannel.appendLine("AI agent tracker activated");
   }
 
-  private refreshCopilotStatus(): void {
-    const wasActive = this.copilotActive;
-    this.copilotActive = COPILOT_EXTENSION_IDS.some((id) => {
-      const ext = vscode.extensions.getExtension(id);
-      return ext?.isActive ?? false;
-    });
+  private refreshAgentStatus(): void {
+    const previousAgent = this.activeAgent;
+    this.activeAgent = null;
 
-    if (this.copilotActive !== wasActive) {
+    // 1. Check for Cursor editor (fork of VS Code — sets TERM_PROGRAM or appName)
+    if (
+      process.env.TERM_PROGRAM?.toLowerCase().includes("cursor") ||
+      process.env.CURSOR_TRACE_ID ||
+      process.env.CURSOR_CHANNEL
+    ) {
+      this.activeAgent = "cursor";
+    }
+
+    // 2. Check for Claude Code shell integration
+    if (!this.activeAgent && (process.env.CLAUDE_CODE || process.env.CLAUDE_CODE_ENTRY)) {
+      this.activeAgent = "claude-code";
+    }
+
+    // 3. Check installed VS Code extensions
+    if (!this.activeAgent) {
+      for (const { id, agent } of AI_EXTENSIONS) {
+        const ext = vscode.extensions.getExtension(id);
+        if (ext?.isActive) {
+          this.activeAgent = agent;
+          break;
+        }
+      }
+    }
+
+    if (this.activeAgent !== previousAgent) {
       this.outputChannel.appendLine(
-        `Copilot status: ${this.copilotActive ? "active" : "inactive"}`,
+        `Active AI agent: ${this.activeAgent ?? "none"}`,
       );
     }
   }
 
   /**
-   * Detect programmatic edit bursts that indicate Copilot agent activity.
-   * When Copilot applies changes, it typically produces a rapid burst of
+   * Detect programmatic edit bursts that indicate AI agent activity.
+   * When an agent applies changes, it typically produces a rapid burst of
    * edits on a single file (faster than human typing).
    */
   private onDocumentChange(e: vscode.TextDocumentChangeEvent): void {
-    if (!this.copilotActive) return;
+    if (!this.activeAgent) return;
     if (e.document.uri.scheme !== "file") return;
     if (e.contentChanges.length === 0) return;
 
-    // Undo/redo are not Copilot edits
+    // Undo/redo are not agent edits
     if (e.reason === vscode.TextDocumentChangeReason.Undo ||
         e.reason === vscode.TextDocumentChangeReason.Redo) {
       return;
@@ -138,11 +178,11 @@ export class CopilotTracker implements vscode.Disposable {
     if (this.pendingFiles.has(relPath)) return;
 
     this.pendingFiles.add(relPath);
-    this.outputChannel.appendLine(`Tracked Copilot edit: ${relPath}`);
+    this.outputChannel.appendLine(`Tracked ${this.activeAgent} edit: ${relPath}`);
     this.flushMarker();
   }
 
-  /** Manually mark the current file as a Copilot edit. */
+  /** Manually mark the current file as an AI-agent edit. */
   private markCurrentFile(): void {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -156,7 +196,8 @@ export class CopilotTracker implements vscode.Disposable {
     const relPath = relative(workspaceRoot, editor.document.uri.fsPath);
     this.pendingFiles.add(relPath);
     this.flushMarker();
-    vscode.window.showInformationMessage(`Marked as Copilot edit: ${relPath}`);
+    const agent = this.activeAgent ?? "unknown agent";
+    vscode.window.showInformationMessage(`Marked as ${agent} edit: ${relPath}`);
   }
 
   /** Write pending files to the marker file. */
@@ -175,10 +216,12 @@ export class CopilotTracker implements vscode.Disposable {
 
     // Merge with existing
     let existing: string[] = [];
+    let existingAgent: string | undefined;
     if (existsSync(markerPath)) {
       try {
         const data = JSON.parse(readFileSync(markerPath, "utf-8"));
         if (Array.isArray(data.files)) existing = data.files;
+        existingAgent = data.agent;
       } catch {
         /* corrupted — overwrite */
       }
@@ -188,7 +231,11 @@ export class CopilotTracker implements vscode.Disposable {
     writeFileSync(
       markerPath,
       JSON.stringify(
-        { files: merged, updatedAt: new Date().toISOString() },
+        {
+          files: merged,
+          agent: this.activeAgent ?? existingAgent,
+          updatedAt: new Date().toISOString(),
+        },
         null,
         2,
       ),
