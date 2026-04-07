@@ -7,6 +7,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join, relative } from "node:path";
+import { writeCopilotModelConfig } from "../../core/copilot-detect.js";
 
 /**
  * Tracks AI-agent-originated edits and writes a marker file so that
@@ -120,6 +121,11 @@ export class CopilotTracker implements vscode.Disposable {
         this.activeModel = models[0].id ?? models[0].name ?? null;
         if (this.activeModel) {
           this.outputChannel.appendLine(`Active Copilot model: ${this.activeModel}`);
+          // Persist to config.json so the git hook can read it at commit time.
+          const workspaceRoot = this.getWorkspaceRoot();
+          if (workspaceRoot) {
+            writeCopilotModelConfig(this.activeModel, workspaceRoot);
+          }
         }
       }
     } catch {

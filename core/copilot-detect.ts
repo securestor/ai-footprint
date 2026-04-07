@@ -183,6 +183,14 @@ const GENERIC_BOT_PATTERN = /co-authored-by:\s*.*\[bot\]/i;
 /** Marker file name (relative to repo root). */
 const MARKER_DIR = ".ai-footprint";
 const MARKER_FILE = "copilot-pending.json";
+/** Persistent config — survives between commits (unlike the marker file). */
+const CONFIG_FILE = "config.json";
+
+interface AiFootprintConfig {
+  /** Last known active Copilot model (written by VS Code extension). */
+  copilotModel?: string;
+  updatedAt?: string;
+}
 
 // ------------------------------------------------------------------ //
 // Public API
@@ -319,6 +327,47 @@ export function writeCopilotMarker(files: string[], repoRoot: string, agent?: st
 
 export { writeCopilotMarker as writeAgentMarker };
 
+// ------------------------------------------------------------------ //
+// Persistent model config (survives between commits)
+// ------------------------------------------------------------------ //
+
+/**
+ * Persist the active Copilot model to `.ai-footprint/config.json`.
+ * Called by the VS Code extension whenever the model changes.
+ * This file is NOT cleared after a commit — the git hook reads it.
+ */
+export function writeCopilotModelConfig(model: string, repoRoot: string): void {
+  const dir = join(repoRoot, MARKER_DIR);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const configPath = join(dir, CONFIG_FILE);
+  let existing: AiFootprintConfig = {};
+  if (existsSync(configPath)) {
+    try {
+      existing = JSON.parse(readFileSync(configPath, "utf-8")) as AiFootprintConfig;
+    } catch { /* corrupted — overwrite */ }
+  }
+  writeFileSync(configPath, JSON.stringify({ ...existing, copilotModel: model, updatedAt: new Date().toISOString() }, null, 2));
+}
+
+/**
+ * Read the persisted Copilot model from `.ai-footprint/config.json`.
+ * Returns null if not found.
+ */
+export function readCopilotModelConfig(repoRoot?: string): string | null {
+  const root = repoRoot ?? findGitRoot();
+  if (!root) return null;
+  const configPath = join(root, MARKER_DIR, CONFIG_FILE);
+  if (!existsSync(configPath)) return null;
+  try {
+    const data = JSON.parse(readFileSync(configPath, "utf-8")) as AiFootprintConfig;
+    return data.copilotModel ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Clear the agent marker file after a commit.
  */
@@ -440,10 +489,17 @@ function detectVSCodeCopilot(): AgentSignal | null {
 
   if (!copilotFound) return null;
 
+  // Step 3: Read persisted model from config file (written by VS Code extension)
+  const model = readCopilotModelConfig() ?? undefined;
+  if (model) {
+    evidence.push(`model: ${model} (from .ai-footprint/config.json)`);
+  }
+
   return {
     source: "copilot-agent",
     confidence: "high",
     evidence,
+    model,
   };
 }
 
