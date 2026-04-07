@@ -23,7 +23,12 @@ export function preCommit(): void {
   if (!diff) return;
 
   const registry = loadRegistry();
-  const matches = matchFile("staged-diff", diff, registry.snippets);
+  // Skip fuzzy and AST passes here — pre-commit is a fast warning only.
+  // The commit-msg hook runs the full scan for accurate trailer attribution.
+  const matches = matchFile("staged-diff", diff, registry.snippets, {
+    fuzzy: false,
+    ast: false,
+  });
 
   if (matches.length === 0) return;
 
