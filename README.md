@@ -43,7 +43,12 @@ Every commit carries its own provenance. Queryable with `git log --grep`, no ext
 ## Quickstart
 
 ```bash
-npm install -g ai-footprint
+# Install from source (package is not published to npm)
+git clone https://github.com/securestor/ai-footprint.git
+cd ai-footprint
+npm install
+npm run build
+npm install -g .
 
 # Initialise registry + auto-install git hooks
 ai-footprint init
