@@ -47,6 +47,8 @@ export interface AgentSignal {
   evidence: string[];
   /** Files identified as agent-edited (from marker file). */
   files?: string[];
+  /** AI model name if known (e.g. "gpt-4.1", "claude-sonnet-4.5"). */
+  model?: string;
 }
 
 // Keep backward-compat aliases
@@ -56,6 +58,8 @@ export interface AgentMarker {
   files: string[];
   /** Which agent wrote these files (optional — if absent, inferred). */
   agent?: string;
+  /** AI model name reported by the agent (e.g. "gpt-4.1", "claude-sonnet-4.5"). */
+  model?: string;
   updatedAt: string;
 }
 
@@ -254,7 +258,11 @@ export function formatCopilotTrailer(signals: AgentSignal[]): string {
     ? `${families[0]} (${sources.join(", ")})`
     : sources.join(", ");
 
-  return `${label}; confidence: ${highestConfidence}`;
+  // Include model name if any signal carries one
+  const model = signals.find((s) => s.model)?.model;
+  const modelPart = model ? `; model: ${model}` : "";
+
+  return `${label}; confidence: ${highestConfidence}${modelPart}`;
 }
 
 export { formatCopilotTrailer as formatAgentTrailer };
@@ -276,7 +284,7 @@ function sourceFamily(source: AgentSource): string {
  * Write or append to the agent marker file.
  * Called by the VS Code extension when AI-agent edits are detected.
  */
-export function writeCopilotMarker(files: string[], repoRoot: string, agent?: string): void {
+export function writeCopilotMarker(files: string[], repoRoot: string, agent?: string, model?: string): void {
   const dir = join(repoRoot, MARKER_DIR);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -287,11 +295,13 @@ export function writeCopilotMarker(files: string[], repoRoot: string, agent?: st
   // Merge with existing entries
   let existing: string[] = [];
   let existingAgent: string | undefined;
+  let existingModel: string | undefined;
   if (existsSync(markerPath)) {
     try {
       const data = JSON.parse(readFileSync(markerPath, "utf-8")) as AgentMarker;
       if (Array.isArray(data.files)) existing = data.files;
       existingAgent = data.agent;
+      existingModel = data.model;
     } catch {
       /* corrupted — overwrite */
     }
@@ -301,6 +311,7 @@ export function writeCopilotMarker(files: string[], repoRoot: string, agent?: st
   const marker: AgentMarker = {
     files: merged,
     agent: agent ?? existingAgent,
+    model: model ?? existingModel,
     updatedAt: new Date().toISOString(),
   };
   writeFileSync(markerPath, JSON.stringify(marker, null, 2));
@@ -358,12 +369,16 @@ function detectAgentMarker(repoRoot?: string): AgentSignal | null {
 
     const agentSource: AgentSource = (data.agent as AgentSource) ?? "copilot-agent";
 
+    const evidenceLabel = `marker file lists ${data.files.length} AI-edited file(s)` +
+      (data.agent ? ` (agent: ${data.agent})` : "") +
+      (data.model ? ` (model: ${data.model})` : "");
+
     return {
       source: agentSource,
       confidence: "high",
-      evidence: [`marker file lists ${data.files.length} AI-edited file(s)` +
-        (data.agent ? ` (agent: ${data.agent})` : "")],
+      evidence: [evidenceLabel],
       files: data.files,
+      model: data.model,
     };
   } catch {
     return null;

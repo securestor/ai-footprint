@@ -62,6 +62,7 @@ interface EditBurst {
 export class CopilotTracker implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private activeAgent: string | null = null;
+  private activeModel: string | null = null;
   private pendingFiles = new Set<string>();
   private editBursts = new Map<string, EditBurst>();
   private outputChannel: vscode.OutputChannel;
@@ -73,10 +74,15 @@ export class CopilotTracker implements vscode.Disposable {
   activate(context: vscode.ExtensionContext): void {
     // Check which AI agents are present
     this.refreshAgentStatus();
+    // Resolve the active LLM model name (best-effort, async)
+    void this.refreshModelInfo();
 
     // Re-check when extensions change
     this.disposables.push(
-      vscode.extensions.onDidChange(() => this.refreshAgentStatus()),
+      vscode.extensions.onDidChange(() => {
+        this.refreshAgentStatus();
+        void this.refreshModelInfo();
+      }),
     );
 
     // Listen for document changes
@@ -97,6 +103,28 @@ export class CopilotTracker implements vscode.Disposable {
     );
 
     this.outputChannel.appendLine("AI agent tracker activated");
+  }
+
+  /**
+   * Resolve the active Copilot model name via the VS Code language model API.
+   * Available in VS Code 1.90+ when the Copilot Chat extension is active.
+   */
+  private async refreshModelInfo(): Promise<void> {
+    try {
+      // vscode.lm is the Language Model API (VS Code 1.90+)
+      const lm = (vscode as unknown as { lm?: { selectChatModels: (opts: { vendor: string }) => Promise<Array<{ id: string; name: string }>> } }).lm;
+      if (!lm?.selectChatModels) return;
+
+      const models = await lm.selectChatModels({ vendor: "copilot" });
+      if (models.length > 0) {
+        this.activeModel = models[0].id ?? models[0].name ?? null;
+        if (this.activeModel) {
+          this.outputChannel.appendLine(`Active Copilot model: ${this.activeModel}`);
+        }
+      }
+    } catch {
+      // API not available in this VS Code version — not an error
+    }
   }
 
   private refreshAgentStatus(): void {
@@ -228,12 +256,22 @@ export class CopilotTracker implements vscode.Disposable {
     }
 
     const merged = [...new Set([...existing, ...this.pendingFiles])];
+    // Preserve previously stored model if we don't have a fresher one
+    let existingModel: string | undefined;
+    if (existsSync(markerPath)) {
+      try {
+        const data = JSON.parse(readFileSync(markerPath, "utf-8"));
+        existingModel = data.model;
+      } catch { /* ignore */ }
+    }
+
     writeFileSync(
       markerPath,
       JSON.stringify(
         {
           files: merged,
           agent: this.activeAgent ?? existingAgent,
+          model: this.activeModel ?? existingModel,
           updatedAt: new Date().toISOString(),
         },
         null,
