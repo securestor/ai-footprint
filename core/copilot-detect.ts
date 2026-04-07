@@ -399,20 +399,27 @@ function detectVSCodeCopilot(): AgentSignal | null {
     evidence.push("PATH contains GitHub Copilot entry");
   }
 
-  // Check extension directory on disk
+  // Check extension directory on disk.
+  // Also check .vscode-server/extensions for remote/SSH environments.
   if (!copilotFound) {
-    try {
-      const extDir = join(homedir(), ".vscode", "extensions");
-      if (existsSync(extDir)) {
-        const entries = readdirSync(extDir);
-        const copilotExt = entries.find((e) => /^github\.copilot/i.test(e));
-        if (copilotExt) {
-          copilotFound = true;
-          evidence.push(`Copilot extension installed: ${copilotExt}`);
+    const extDirs = [
+      join(homedir(), ".vscode", "extensions"),
+      join(homedir(), ".vscode-server", "extensions"),
+    ];
+    for (const extDir of extDirs) {
+      if (copilotFound) break;
+      try {
+        if (existsSync(extDir)) {
+          const entries = readdirSync(extDir);
+          const copilotExt = entries.find((e) => /^github\.copilot/i.test(e));
+          if (copilotExt) {
+            copilotFound = true;
+            evidence.push(`Copilot extension installed: ${copilotExt}`);
+          }
         }
+      } catch {
+        /* best-effort */
       }
-    } catch {
-      /* best-effort */
     }
   }
 
