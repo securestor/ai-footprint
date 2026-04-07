@@ -352,20 +352,35 @@ export function writeCopilotModelConfig(model: string, repoRoot: string): void {
 }
 
 /**
- * Read the persisted Copilot model from `.ai-footprint/config.json`.
- * Returns null if not found.
+ * Read the persisted Copilot model.
+ * Checks two locations in order:
+ *  1. Repo-local `.ai-footprint/config.json` (written by VS Code extension)
+ *  2. Global `~/.ai-footprint/config.json` (set via `ai-footprint config --model`)
+ * Returns null if not found in either location.
  */
 export function readCopilotModelConfig(repoRoot?: string): string | null {
+  // 1. Repo-local config (written by VS Code extension)
   const root = repoRoot ?? findGitRoot();
-  if (!root) return null;
-  const configPath = join(root, MARKER_DIR, CONFIG_FILE);
-  if (!existsSync(configPath)) return null;
-  try {
-    const data = JSON.parse(readFileSync(configPath, "utf-8")) as AiFootprintConfig;
-    return data.copilotModel ?? null;
-  } catch {
-    return null;
+  if (root) {
+    const localPath = join(root, MARKER_DIR, CONFIG_FILE);
+    if (existsSync(localPath)) {
+      try {
+        const data = JSON.parse(readFileSync(localPath, "utf-8")) as AiFootprintConfig;
+        if (data.copilotModel) return data.copilotModel;
+      } catch { /* fall through */ }
+    }
   }
+
+  // 2. Global config (~/.ai-footprint/config.json) set via `ai-footprint config --model`
+  try {
+    const globalPath = join(homedir(), ".ai-footprint", CONFIG_FILE);
+    if (existsSync(globalPath)) {
+      const data = JSON.parse(readFileSync(globalPath, "utf-8")) as AiFootprintConfig;
+      if (data.copilotModel) return data.copilotModel;
+    }
+  } catch { /* best-effort */ }
+
+  return null;
 }
 
 /**

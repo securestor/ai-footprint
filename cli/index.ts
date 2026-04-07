@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { init, addSnippet, addDirectory, loadRegistry } from "./registry.js";
 import { scan } from "./scanner.js";
 import { preCommit, commitMsg } from "../git-hooks/hooks.js";
@@ -93,6 +94,7 @@ Team subcommands:
   team status     Show team registry status
 
 Examples:
+  npx ai-footprint config --model gpt-4.1           # set default model once
   npx ai-footprint init
   npx ai-footprint add-snippet --file snippet.ts --source "chatgpt" --model "gpt-4.1"
   npx ai-footprint track ./src --source "copilot" --model "gpt-4.1"
@@ -366,6 +368,32 @@ switch (command) {
 
     console.log("\n" + "═".repeat(40));
     console.log("");
+    break;
+  }
+
+  case "config": {
+    const modelIdx = args.indexOf("--model");
+    if (modelIdx === -1 || !args[modelIdx + 1]) {
+      console.error("Usage: ai-footprint config --model <model-name>");
+      console.error("Example: ai-footprint config --model gpt-4.1");
+      console.error("Example: ai-footprint config --model claude-sonnet-4.5");
+      process.exit(1);
+    }
+    const model = args[modelIdx + 1];
+    const globalDir = resolve(homedir(), ".ai-footprint");
+    if (!existsSync(globalDir)) mkdirSync(globalDir, { recursive: true, mode: 0o700 });
+    const configPath = resolve(globalDir, "config.json");
+    let existing: Record<string, unknown> = {};
+    if (existsSync(configPath)) {
+      try { existing = JSON.parse(readFileSync(configPath, "utf-8")); } catch { /* overwrite */ }
+    }
+    writeFileSync(configPath, JSON.stringify(
+      { ...existing, copilotModel: model, updatedAt: new Date().toISOString() },
+      null, 2,
+    ), { mode: 0o600 });
+    console.log(`[ai-footprint] Default model set → ${model}`);
+    console.log(`  Written to: ${configPath}`);
+    console.log(`  Future commits will include: AI-Footprint: ...; model: ${model}`);
     break;
   }
 
