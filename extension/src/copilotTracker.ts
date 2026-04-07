@@ -7,7 +7,6 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { writeCopilotModelConfig } from "../../core/copilot-detect.js";
 
 /**
  * Tracks AI-agent-originated edits and writes a marker file so that
@@ -121,10 +120,11 @@ export class CopilotTracker implements vscode.Disposable {
         this.activeModel = models[0].id ?? models[0].name ?? null;
         if (this.activeModel) {
           this.outputChannel.appendLine(`Active Copilot model: ${this.activeModel}`);
-          // Persist to config.json so the git hook can read it at commit time.
+          // Persist to .ai-footprint/config.json so the git hook can read it
+          // at commit time (this file is never cleared between commits).
           const workspaceRoot = this.getWorkspaceRoot();
           if (workspaceRoot) {
-            writeCopilotModelConfig(this.activeModel, workspaceRoot);
+            this.persistModelConfig(this.activeModel, workspaceRoot);
           }
         }
       }
@@ -284,6 +284,27 @@ export class CopilotTracker implements vscode.Disposable {
         2,
       ),
     );
+  }
+
+  /**
+   * Write the active model name to `.ai-footprint/config.json`.
+   * This file is persistent (never cleared after commits) so the git hook
+   * can read the last known model at any point.
+   */
+  private persistModelConfig(model: string, workspaceRoot: string): void {
+    const dir = join(workspaceRoot, MARKER_DIR);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const configPath = join(dir, "config.json");
+    let existing: Record<string, unknown> = {};
+    if (existsSync(configPath)) {
+      try { existing = JSON.parse(readFileSync(configPath, "utf-8")); } catch { /* overwrite */ }
+    }
+    writeFileSync(configPath, JSON.stringify(
+      { ...existing, copilotModel: model, updatedAt: new Date().toISOString() },
+      null, 2,
+    ));
   }
 
   private getWorkspaceRoot(): string | undefined {
