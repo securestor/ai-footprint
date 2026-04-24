@@ -480,8 +480,8 @@ export const DEFAULT_LLM_HOSTS = new Set([
 export function isAllowedLLMHost(hostname: string): boolean {
   if (DEFAULT_LLM_HOSTS.has(hostname)) return true;
   if (hostname.endsWith(".openai.azure.com")) return true;
-  // Ollama — any local-only address
-  if (hostname.endsWith(".local")) return true;
+  // NOTE: .local mDNS wildcard intentionally removed — it exposes all LAN mDNS
+  // hosts to SSRF. Ollama users should add their host explicitly via --allowed-hosts.
   return false;
 }
 

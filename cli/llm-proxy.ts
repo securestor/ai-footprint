@@ -382,8 +382,8 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
 
         // --- Forward response to client ---
         const resHeaders: Record<string, string | string[]> = {};
-        for (const [key, value] of Object.entries(proxyRes.headers)) {
-          if (value) resHeaders[key] = value;
+        for (const [key, value] of Object.entries(proxyRes.headers as Record<string, string | string[] | undefined>)) {
+          if (value && !HOP_BY_HOP.has(key.toLowerCase())) resHeaders[key] = value;
         }
         clientRes.writeHead(proxyRes.statusCode ?? 200, resHeaders);
         clientRes.end(resBody);
@@ -411,8 +411,10 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
           if (!resJson) return;
 
           // Extract model from response if not already known
-          if (!modelName && resJson.model) {
-            modelName = resJson.model as string;
+          if (!modelName && typeof resJson.model === "string") {
+            const raw = resJson.model;
+            // Sanitise: strip control characters from untrusted API response data
+            modelName = raw.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 256) || null;
           }
 
           if (modelName) {
@@ -506,7 +508,7 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
 
   const statusPort = port + 1;
 
-  server.listen(port, () => {
+  server.listen(port, "127.0.0.1", () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                  AI Footprint Intercept Proxy                ║
@@ -533,7 +535,7 @@ export function startInterceptProxy(opts: InterceptOptions = {}): void {
 `);
   });
 
-  statusServer.listen(statusPort);
+  statusServer.listen(statusPort, "127.0.0.1");
 
   // Graceful shutdown
   const shutdown = () => {

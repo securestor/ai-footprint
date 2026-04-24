@@ -1,7 +1,7 @@
 # AI Footprint — Threat Model & Security Architecture
 
-**Version:** 1.0  
-**Date:** 2026-03-31  
+**Version:** 1.1  
+**Date:** 2026-04-24  
 **Classification:** Public  
 **Framework:** STRIDE + EU Cyber Resilience Act (CRA) mapping
 
@@ -93,8 +93,8 @@ AI Footprint is a Git-native provenance tracking tool that:
 | **STRIDE** | Spoofing, Information Disclosure |
 | **CRA Article** | Annex I §2.1 — protection against unauthorized access |
 | **Severity** | HIGH |
-| **Mitigation** | Default allowlist of known LLM API hosts (`DEFAULT_LLM_HOSTS` in `core/security.ts`). Unknown hosts blocked with 403. Azure OpenAI wildcard (`*.openai.azure.com`) and localhost supported. Custom allowlist via `--allowed-hosts`. Hop-by-hop headers stripped to prevent request smuggling. |
-| **Status** | ✅ Remediated |
+| **Mitigation** | Default allowlist of known LLM API hosts (`DEFAULT_LLM_HOSTS` in `core/security.ts`). Unknown hosts blocked with 403. Azure OpenAI wildcard (`*.openai.azure.com`) and localhost (`127.0.0.1`, `::1`) supported. `.local` mDNS wildcard removed (exposed all LAN mDNS hosts). Custom allowlist via `--allowed-hosts` for non-default endpoints (e.g. Ollama). Hop-by-hop headers stripped from both request and response paths. Both proxy and status server now bind to `127.0.0.1` to prevent LAN exposure. |
+| **Status** | ✅ Remediated (2026-04-24) |
 
 ### T5 — Path Traversal (Read & Write)
 
@@ -161,6 +161,28 @@ AI Footprint is a Git-native provenance tracking tool that:
 | **Severity** | MEDIUM |
 | **Mitigation** | Hash-chained audit log records all snippet additions, scans, team syncs, and SBOM exports. Git commit trailers provide in-VCS evidence. SBOM export includes AI provenance metadata. |
 | **Status** | ✅ Implemented |
+
+### T11 — Network-Accessible Proxy (LAN Exposure)
+
+| Property | Value |
+|---|---|
+| **Threat** | The intercept proxy and its unauthenticated status endpoint listen on all interfaces (`0.0.0.0`), allowing any machine on the local network to relay requests through the proxy or read session statistics (provider names, model names, interception counts) |
+| **STRIDE** | Information Disclosure, Elevation of Privilege |
+| **CRA Article** | Annex I §2.1 — protection against unauthorized access |
+| **Severity** | HIGH |
+| **Mitigation** | Both `server.listen()` and `statusServer.listen()` in `cli/llm-proxy.ts` now explicitly bind to `127.0.0.1`, restricting access to the local machine only. |
+| **Status** | ✅ Remediated (2026-04-24) |
+
+### T12 — Stored XSS / Terminal Injection via Untrusted LLM Response Metadata
+
+| Property | Value |
+|---|---|
+| **Threat** | Model names extracted from untrusted LLM API responses are stored in the local registry and rendered in the dashboard UI and git commit trailers without sanitisation. A compromised or malicious API could return model names containing ANSI escape sequences, HTML, or control characters, enabling terminal injection or stored XSS in the dashboard. |
+| **STRIDE** | Tampering, Elevation of Privilege |
+| **CRA Article** | Annex I §2.1 — data protection & input validation |
+| **Severity** | MEDIUM |
+| **Mitigation** | Model names extracted from `resJson.model` in `cli/llm-proxy.ts` are now sanitised: control characters (`\x00`–`\x1f`, `\x7f`) are stripped and the value is capped at 256 characters before storage. |
+| **Status** | ✅ Remediated (2026-04-24) |
 
 ---
 
@@ -252,6 +274,7 @@ Every security-relevant operation is logged to a hash-chained, append-only audit
 | Audit log deletion (not tampering) | LOW | Attacker with file access can `rm` the log | Ship logs to external SIEM via syslog integration (future) |
 | Tree-sitter native library supply chain | LOW | Optional dependency loaded dynamically | Verify npm package checksums; use lockfile |
 | ReDoS in AI pattern matching | VERY LOW | Current regex patterns are simple alternation, no nested quantifiers | Monitor regex complexity on pattern additions |
+| Ollama / custom LLM on non-standard hostname | LOW | `.local` mDNS wildcard was removed to prevent SSRF; Ollama users must now pass `--allowed-hosts` explicitly | Document in README; validate host entry against `validateNoControlChars()` |
 
 ---
 
@@ -284,3 +307,4 @@ ai-footprint intercept --allowed-hosts api.openai.com,api.anthropic.com
 | Date | Version | Change |
 |---|---|---|
 | 2026-03-31 | 1.0 | Initial threat model. Full STRIDE analysis, CRA mapping, 10 threats identified and mitigated. |
+| 2026-04-24 | 1.1 | Security review: remediated T4 sub-issues (proxy bound to 127.0.0.1, hop-by-hop stripped from responses, `.local` mDNS wildcard removed). Added T11 (LAN-exposed proxy) and T12 (stored XSS/terminal injection via LLM response metadata). Added Ollama entry to residual risks. |
